@@ -240,11 +240,11 @@ async function fetchRecipeData(url) {
       return data.contents;
     },
     async (u) => {
-      const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
+      const res = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
       return await res.text();
     },
     async (u) => {
-      const res = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
+      const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
       return await res.text();
     }
   ];
@@ -253,10 +253,14 @@ async function fetchRecipeData(url) {
   for (const proxy of proxies) {
     try {
       const content = await proxy(url);
-      if (content && content.length > 500) { html = content; break; }
+      // エラーページや空のコンテンツを除外（材料・レシピ・料理などの日本語が含まれているかチェック）
+      if (content && content.length > 1000 && isLikelyRecipePage(content)) {
+        html = content;
+        break;
+      }
     } catch(e) { continue; }
   }
-  if (!html) throw new Error('全プロキシ失敗');
+  if (!html) throw new Error('取得失敗');
 
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
@@ -267,6 +271,13 @@ async function fetchRecipeData(url) {
 
   // 方法2: HTMLのタグ構造から取得（白ごはん.com等）
   return extractFromHtml(doc);
+}
+
+function isLikelyRecipePage(html) {
+  // エラーページでないことを確認（日本語のレシピキーワードが含まれているか）
+  const keywords = ['材料', 'レシピ', '作り方', '料理', '食材', 'recipe', 'ingredient'];
+  const lower = html.toLowerCase();
+  return keywords.some(k => html.includes(k) || lower.includes(k));
 }
 
 function extractFromJsonLd(doc) {
