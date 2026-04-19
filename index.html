@@ -6,6 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <title>マイレシピ</title>
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; background: #f8f5f0; color: #333; }
@@ -22,6 +25,9 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
 .search-input:focus { border-color: #ff6b35; }
 .voice-search-btn { background: #ff6b35; border: none; color: white; width: 44px; height: 44px; border-radius: 50%; font-size: 1.2rem; cursor: pointer; flex-shrink: 0; }
 @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+
+.sync-indicator { text-align: center; padding: 6px; font-size: 0.78rem; color: #999; background: white; border-bottom: 1px solid #f0f0f0; display: none; }
+.sync-indicator.active { display: block; }
 
 .recipe-list { padding: 12px; }
 .recipe-card { background: white; border-radius: 12px; padding: 16px; margin-bottom: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); cursor: pointer; display: flex; align-items: center; gap: 12px; }
@@ -67,7 +73,6 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
 .voice-status { background: #fff5f0; border: 1px solid #ffd4c0; border-radius: 10px; padding: 12px; margin-bottom: 12px; text-align: center; font-size: 0.9rem; display: none; }
 .voice-status.active { display: block; }
 
-/* フォーム */
 .form-content { padding: 16px; padding-bottom: 100px; }
 .form-group { margin-bottom: 16px; }
 .form-label { font-weight: bold; font-size: 0.9rem; color: #555; margin-bottom: 6px; display: block; }
@@ -76,19 +81,18 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
 .form-textarea { resize: vertical; min-height: 100px; }
 .form-hint { font-size: 0.78rem; color: #999; margin-top: 4px; }
 
-/* URL入力エリア */
 .url-input-area { display: flex; gap: 8px; align-items: stretch; }
 .url-input-area .form-input { flex: 1; margin: 0; }
 .fetch-btn { background: #ff6b35; color: white; border: none; border-radius: 10px; padding: 0 16px; font-size: 0.9rem; font-weight: bold; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
 .fetch-btn:disabled { background: #ccc; cursor: not-allowed; }
 
-/* 取得状況バナー */
 .fetch-status { border-radius: 10px; padding: 12px; margin-top: 8px; font-size: 0.88rem; display: none; }
 .fetch-status.loading { display: block; background: #ebf8ff; color: #2b6cb0; border: 1px solid #bee3f8; }
 .fetch-status.success { display: block; background: #f0fff4; color: #276749; border: 1px solid #9ae6b4; }
 .fetch-status.error { display: block; background: #fff5f5; color: #c53030; border: 1px solid #fed7d7; }
 
 .save-btn { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #ff6b35; color: white; border: none; border-radius: 30px; padding: 16px 48px; font-size: 1rem; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(255,107,53,0.4); z-index: 50; }
+.save-btn:disabled { background: #ccc; box-shadow: none; }
 .delete-btn { display: block; width: 100%; background: #fff; border: 2px solid #fc8181; color: #e53e3e; border-radius: 10px; padding: 14px; font-size: 1rem; cursor: pointer; margin-top: 16px; text-align: center; font-weight: bold; }
 
 .listening-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; flex-direction: column; }
@@ -101,7 +105,6 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
 </head>
 <body>
 
-<!-- 音声検索オーバーレイ -->
 <div class="listening-overlay" id="listeningOverlay">
   <div class="listening-circle">🎤</div>
   <div class="listening-text">聞いています...</div>
@@ -109,7 +112,7 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
   <button class="listening-cancel" onclick="stopVoiceSearch()">キャンセル</button>
 </div>
 
-<!-- 画面：一覧 -->
+<!-- 一覧画面 -->
 <div class="screen active" id="screenList">
   <div class="header">
     <h1>🍳 マイレシピ</h1>
@@ -117,13 +120,14 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
   </div>
   <div class="search-area">
     <input type="search" class="search-input" id="searchInput" placeholder="レシピを検索..." oninput="renderList()">
-    <button class="voice-search-btn" id="voiceSearchBtn" onclick="startVoiceSearch()" title="音声検索">🎤</button>
+    <button class="voice-search-btn" onclick="startVoiceSearch()" title="音声検索">🎤</button>
   </div>
+  <div class="sync-indicator" id="syncIndicator">☁️ 同期中...</div>
   <div class="recipe-list" id="recipeList"></div>
   <button class="fab" onclick="showAddScreen()">＋</button>
 </div>
 
-<!-- 画面：詳細 -->
+<!-- 詳細画面 -->
 <div class="screen" id="screenDetail">
   <div class="header">
     <button class="header-btn" onclick="showListScreen()">←</button>
@@ -133,7 +137,7 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
   <div class="detail-content" id="detailContent"></div>
 </div>
 
-<!-- 画面：追加・編集 -->
+<!-- 追加・編集画面 -->
 <div class="screen" id="screenForm">
   <div class="header">
     <button class="header-btn" onclick="cancelForm()">✕</button>
@@ -142,8 +146,6 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
   </div>
   <div class="form-content">
     <input type="hidden" id="editId">
-
-    <!-- URL入力 → 自動取得 -->
     <div class="form-group">
       <label class="form-label">レシピのURL</label>
       <div class="url-input-area">
@@ -153,47 +155,77 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
       <div class="fetch-status" id="fetchStatus"></div>
       <div class="form-hint">URLを貼って「自動取得」を押すと材料・手順が自動で入ります</div>
     </div>
-
     <div class="form-group">
       <label class="form-label">レシピ名 *</label>
       <input type="text" class="form-input" id="inputName" placeholder="例：タケノコご飯">
     </div>
-
     <div class="form-group">
       <label class="form-label">材料（1行に1つ）*</label>
-      <textarea class="form-textarea" id="inputIngredients" rows="6" placeholder="米 2合&#10;タケノコ 200g&#10;醤油 大さじ2&#10;みりん 大さじ1"></textarea>
+      <textarea class="form-textarea" id="inputIngredients" rows="6" placeholder="米 2合&#10;タケノコ 200g&#10;醤油 大さじ2"></textarea>
     </div>
-
     <div class="form-group">
       <label class="form-label">手順（1行に1ステップ）*</label>
-      <textarea class="form-textarea" id="inputSteps" rows="8" placeholder="米をといで水に30分浸す&#10;タケノコを食べやすい大きさに切る&#10;調味料を合わせて炊飯器に入れる&#10;普通モードで炊く"></textarea>
+      <textarea class="form-textarea" id="inputSteps" rows="8" placeholder="米をといで水に30分浸す&#10;タケノコを切る&#10;炊飯器で炊く"></textarea>
     </div>
-
     <div id="deleteArea"></div>
   </div>
-  <button class="save-btn" onclick="saveRecipe()">保存する</button>
+  <button class="save-btn" id="saveBtn" onclick="saveRecipe()">保存する</button>
 </div>
 
 <script>
-// ===== データ管理 =====
+// ===== Firebase初期化 =====
+const firebaseConfig = {
+  apiKey: "AIzaSyARZxWoDCUL9MftNNRi0qgU2WLm_Vc_P0c",
+  authDomain: "my-recipe-bdc46.firebaseapp.com",
+  projectId: "my-recipe-bdc46",
+  storageBucket: "my-recipe-bdc46.firebasestorage.app",
+  messagingSenderId: "856909880207",
+  appId: "1:856909880207:web:e0a0f8fcf6481f7d5989fa"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// ===== ローカルキャッシュ =====
+let recipesCache = [];
+
+// ===== リアルタイム同期 =====
+function startSync() {
+  const indicator = document.getElementById('syncIndicator');
+  indicator.classList.add('active');
+  db.collection('recipes').orderBy('createdAt', 'desc').onSnapshot(snapshot => {
+    recipesCache = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    indicator.classList.remove('active');
+    renderList();
+    if (currentRecipeId) {
+      const r = recipesCache.find(r => r.id === currentRecipeId);
+      if (r) renderDetailContent(r);
+    }
+  }, err => {
+    indicator.classList.remove('active');
+    console.error(err);
+  });
+}
+
+// ===== データ操作 =====
 const DB = {
-  getAll() { return JSON.parse(localStorage.getItem('myRecipes') || '[]'); },
-  save(list) { localStorage.setItem('myRecipes', JSON.stringify(list)); },
-  add(r) {
-    const list = DB.getAll();
-    r.id = Date.now().toString();
-    r.createdAt = new Date().toISOString();
-    list.push(r);
-    DB.save(list);
-    return r;
-  },
-  update(r) { DB.save(DB.getAll().map(x => x.id === r.id ? r : x)); },
-  delete(id) { DB.save(DB.getAll().filter(r => r.id !== id)); },
-  find(id) { return DB.getAll().find(r => r.id === id); },
+  getAll() { return recipesCache; },
+  find(id) { return recipesCache.find(r => r.id === id); },
   search(q) {
-    if (!q) return DB.getAll();
+    if (!q) return recipesCache;
     const kw = q.toLowerCase();
-    return DB.getAll().filter(r => r.name.toLowerCase().includes(kw));
+    return recipesCache.filter(r => r.name.toLowerCase().includes(kw));
+  },
+  async add(r) {
+    r.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+    const doc = await db.collection('recipes').add(r);
+    return { id: doc.id, ...r };
+  },
+  async update(r) {
+    const { id, ...data } = r;
+    await db.collection('recipes').doc(id).set(data, { merge: true });
+  },
+  async delete(id) {
+    await db.collection('recipes').doc(id).delete();
   }
 };
 
@@ -201,233 +233,125 @@ const DB = {
 async function autoFetchRecipe() {
   const url = document.getElementById('inputUrl').value.trim();
   if (!url) { showFetchStatus('error', 'URLを入力してください'); return; }
-
   const btn = document.getElementById('fetchBtn');
-  btn.disabled = true;
-  btn.textContent = '取得中...';
+  btn.disabled = true; btn.textContent = '取得中...';
   showFetchStatus('loading', '⏳ レシピ情報を取得しています...');
-
   try {
     const result = await fetchRecipeData(url);
-
     if (result && (result.name || result.ingredients.length || result.steps.length)) {
       if (result.name) document.getElementById('inputName').value = result.name;
       if (result.ingredients.length) document.getElementById('inputIngredients').value = result.ingredients.join('\n');
       if (result.steps.length) document.getElementById('inputSteps').value = result.steps.join('\n');
-
       const parts = [];
       if (result.name) parts.push('レシピ名');
       if (result.ingredients.length) parts.push('材料 ' + result.ingredients.length + '品目');
       if (result.steps.length) parts.push('手順 ' + result.steps.length + 'ステップ');
-      showFetchStatus('success', '✅ 取得成功！' + parts.join('・') + 'を入力しました。内容を確認して保存してください。');
+      showFetchStatus('success', '✅ ' + parts.join('・') + 'を取得しました！確認して保存してください。');
     } else {
-      showFetchStatus('error', '⚠️ このサイトは自動取得に対応していません。手動で入力してください。');
+      showFetchStatus('error', '⚠️ 自動取得できませんでした。手動で入力してください。');
     }
   } catch(e) {
-    showFetchStatus('error', '❌ 取得できませんでした。URLを確認するか手動で入力してください。');
+    showFetchStatus('error', '❌ 取得に失敗しました。URLを確認してください。');
   } finally {
-    btn.disabled = false;
-    btn.textContent = '自動取得';
+    btn.disabled = false; btn.textContent = '自動取得';
   }
 }
 
 async function fetchRecipeData(url) {
-  // 複数のプロキシを順番に試す
   const proxies = [
-    async (u) => {
-      const res = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
-      const data = await res.json();
-      return data.contents;
-    },
-    async (u) => {
-      const res = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
-      return await res.text();
-    },
-    async (u) => {
-      const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
-      return await res.text();
-    }
+    async (u) => { const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(u), {signal:AbortSignal.timeout(12000)}); const d = await r.json(); return d.contents; },
+    async (u) => { const r = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u), {signal:AbortSignal.timeout(12000)}); return await r.text(); },
+    async (u) => { const r = await fetch('https://corsproxy.io/?' + encodeURIComponent(u), {signal:AbortSignal.timeout(12000)}); return await r.text(); }
   ];
-
   let html = null;
   for (const proxy of proxies) {
-    try {
-      const content = await proxy(url);
-      // エラーページや空のコンテンツを除外（材料・レシピ・料理などの日本語が含まれているかチェック）
-      if (content && content.length > 1000 && isLikelyRecipePage(content)) {
-        html = content;
-        break;
-      }
-    } catch(e) { continue; }
+    try { const c = await proxy(url); if (c && c.length > 1000 && isLikelyRecipePage(c)) { html = c; break; } } catch(e) { continue; }
   }
   if (!html) throw new Error('取得失敗');
-
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-
-  // 方法1: schema.org JSON-LDから取得（最も確実）
-  const result = extractFromJsonLd(doc);
-  if (result && (result.ingredients.length || result.steps.length)) return result;
-
-  // 方法2: HTMLのタグ構造から取得（白ごはん.com等）
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const jsonLd = extractFromJsonLd(doc);
+  if (jsonLd && (jsonLd.ingredients.length || jsonLd.steps.length)) return jsonLd;
   return extractFromHtml(doc);
 }
 
 function isLikelyRecipePage(html) {
-  // エラーページでないことを確認（日本語のレシピキーワードが含まれているか）
-  const keywords = ['材料', 'レシピ', '作り方', '料理', '食材', 'recipe', 'ingredient'];
-  const lower = html.toLowerCase();
-  return keywords.some(k => html.includes(k) || lower.includes(k));
+  return ['材料','レシピ','作り方','料理','食材','recipe','ingredient'].some(k => html.includes(k));
 }
 
 function extractFromJsonLd(doc) {
-  const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
-  for (const script of scripts) {
-    try {
-      const json = JSON.parse(script.textContent);
-      const recipe = findRecipeInJson(json);
-      if (recipe) return parseSchemaRecipe(recipe);
-    } catch(e) {}
+  for (const s of doc.querySelectorAll('script[type="application/ld+json"]')) {
+    try { const r = findRecipeInJson(JSON.parse(s.textContent)); if (r) return parseSchemaRecipe(r); } catch(e) {}
   }
   return null;
 }
 
 function findRecipeInJson(json) {
   if (!json) return null;
-  if (Array.isArray(json)) {
-    for (const item of json) {
-      const r = findRecipeInJson(item);
-      if (r) return r;
-    }
-  }
-  const type = json['@type'];
-  if (type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe'))) return json;
+  if (Array.isArray(json)) { for (const i of json) { const r = findRecipeInJson(i); if (r) return r; } }
+  const t = json['@type'];
+  if (t === 'Recipe' || (Array.isArray(t) && t.includes('Recipe'))) return json;
   if (json['@graph']) return findRecipeInJson(json['@graph']);
   return null;
 }
 
-function parseSchemaRecipe(recipe) {
-  // レシピ名
-  const name = recipe.name || '';
-
-  // 材料
-  const ingredients = (recipe.recipeIngredient || [])
-    .map(i => String(i).trim())
-    .filter(Boolean);
-
-  // 手順
+function parseSchemaRecipe(r) {
+  const name = r.name || '';
+  const ingredients = (r.recipeIngredient || []).map(i => String(i).trim()).filter(Boolean);
   let steps = [];
-  const inst = recipe.recipeInstructions;
+  const inst = r.recipeInstructions;
   if (inst) {
-    if (typeof inst === 'string') {
-      steps = inst.split(/\n|。/).map(s => s.trim()).filter(s => s.length > 3);
-    } else if (Array.isArray(inst)) {
+    if (typeof inst === 'string') steps = inst.split(/\n|。/).map(s=>s.trim()).filter(s=>s.length>3);
+    else if (Array.isArray(inst)) {
       for (const s of inst) {
-        if (typeof s === 'string') {
-          steps.push(s.trim());
-        } else if (s['@type'] === 'HowToStep') {
-          steps.push((s.text || s.name || '').trim());
-        } else if (s['@type'] === 'HowToSection' && s.itemListElement) {
-          for (const sub of s.itemListElement) {
-            steps.push((sub.text || sub.name || '').trim());
-          }
-        }
+        if (typeof s === 'string') steps.push(s.trim());
+        else if (s['@type'] === 'HowToStep') steps.push((s.text||s.name||'').trim());
+        else if (s['@type'] === 'HowToSection' && s.itemListElement) for (const sub of s.itemListElement) steps.push((sub.text||sub.name||'').trim());
       }
       steps = steps.filter(Boolean);
     }
   }
-
   return { name, ingredients, steps };
 }
 
 function extractFromHtml(doc) {
-  const name = doc.querySelector('h1')?.textContent?.trim()
-    || doc.querySelector('title')?.textContent?.replace(/[|\-\u2014\u300c\u300d].*$/, '').trim()
-    || '';
-  const ingredients = extractIngredientsFromHtml(doc);
-  const steps = extractStepsFromHtml(doc);
-  return { name, ingredients, steps };
+  const name = doc.querySelector('h1')?.textContent?.trim() || doc.querySelector('title')?.textContent?.replace(/[|\-].*$/,'').trim() || '';
+  return { name, ingredients: extractIngredientsFromHtml(doc), steps: extractStepsFromHtml(doc) };
 }
 
 function extractIngredientsFromHtml(doc) {
   const results = [];
-
-  // 方法1：「材料」見出しの近くにあるul/liを探す
-  const headings = doc.querySelectorAll('h1,h2,h3,h4,h5');
-  for (const h of headings) {
-    if (/(材料|ingredient)/i.test(h.textContent || '')) {
+  for (const h of doc.querySelectorAll('h1,h2,h3,h4,h5')) {
+    if (/(材料|ingredient)/i.test(h.textContent||'')) {
       let el = h.nextElementSibling;
       while (el && !/^H[123]$/.test(el.tagName)) {
         const lists = el.matches('ul,ol') ? [el] : Array.from(el.querySelectorAll('ul,ol'));
-        lists.forEach(list => {
-          list.querySelectorAll('li').forEach(li => {
-            const t = li.textContent.trim().replace(/\s+/g, ' ');
-            if (t && t.length > 1 && t.length < 120 && !t.startsWith('http')) results.push(t);
-          });
-        });
+        lists.forEach(l => l.querySelectorAll('li').forEach(li => { const t=li.textContent.trim().replace(/\s+/g,' '); if(t&&t.length<120&&!t.startsWith('http')) results.push(t); }));
         el = el.nextElementSibling;
       }
       if (results.length) break;
     }
   }
-
-  // 方法2：class名に ingredient / material / zairyo を含む要素
-  if (!results.length) {
-    doc.querySelectorAll('[class*="ingredient"],[class*="material"],[class*="zairyo"],[class*="Ingredient"]').forEach(el => {
-      el.querySelectorAll('li').forEach(li => {
-        const t = li.textContent.trim().replace(/\s+/g, ' ');
-        if (t && t.length > 1 && t.length < 120) results.push(t);
-      });
-    });
-  }
-
+  if (!results.length) doc.querySelectorAll('[class*="ingredient"],[class*="material"],[class*="zairyo"]').forEach(el => el.querySelectorAll('li').forEach(li => { const t=li.textContent.trim().replace(/\s+/g,' '); if(t&&t.length<120) results.push(t); }));
   return [...new Set(results)];
 }
 
 function extractStepsFromHtml(doc) {
   const results = [];
-
-  // 方法1：「作り方」「手順」「レシピ」見出しの近くにあるp/li/olを探す
-  // h2レベルの見出しを探し、その配下のh3や段落もすべて収集する
-  const headings = doc.querySelectorAll('h1,h2,h3,h4,h5');
-  for (const h of headings) {
-    if (/(作り方|手順|レシピ|調理|how.?to|instruction|direction)/i.test(h.textContent || '')) {
-      // この見出し以降、同レベル以上の見出しが来るまでの全p/liを収集
+  for (const h of doc.querySelectorAll('h1,h2,h3,h4,h5')) {
+    if (/(作り方|手順|レシピ|調理|how.?to|instruction)/i.test(h.textContent||'')) {
       const level = parseInt(h.tagName[1]);
       let el = h.nextElementSibling;
       while (el) {
-        // 同レベル以上のhタグが来たら終了
         if (/^H[1-6]$/.test(el.tagName) && parseInt(el.tagName[1]) <= level) break;
-        if (el.matches('p')) {
-          const t = el.textContent.trim().replace(/\s+/g, ' ');
-          if (t && t.length > 8 && t.length < 600) results.push(t);
-        } else if (el.matches('ol')) {
-          el.querySelectorAll('li').forEach(li => {
-            const t = li.textContent.trim().replace(/\s+/g, ' ');
-            if (t && t.length > 5 && t.length < 600) results.push(t);
-          });
-        } else {
-          // divの中にあるpタグも収集
-          el.querySelectorAll('p').forEach(p => {
-            const t = p.textContent.trim().replace(/\s+/g, ' ');
-            if (t && t.length > 8 && t.length < 600) results.push(t);
-          });
-        }
+        if (el.matches('p')) { const t=el.textContent.trim().replace(/\s+/g,' '); if(t&&t.length>8&&t.length<600) results.push(t); }
+        else if (el.matches('ol')) el.querySelectorAll('li').forEach(li => { const t=li.textContent.trim().replace(/\s+/g,' '); if(t&&t.length>5&&t.length<600) results.push(t); });
+        else el.querySelectorAll('p').forEach(p => { const t=p.textContent.trim().replace(/\s+/g,' '); if(t&&t.length>8&&t.length<600) results.push(t); });
         el = el.nextElementSibling;
       }
       if (results.length) break;
     }
   }
-
-  // 方法2：class名に step / instruction / procedure を含む要素
-  if (!results.length) {
-    doc.querySelectorAll('[class*="step"],[class*="Step"],[class*="instruction"],[class*="procedure"],[class*="howto"]').forEach(el => {
-      const t = el.textContent.trim().replace(/\s+/g, ' ');
-      if (t && t.length > 8 && t.length < 600) results.push(t);
-    });
-  }
-
-  // 重複除去
+  if (!results.length) doc.querySelectorAll('[class*="step"],[class*="instruction"],[class*="procedure"]').forEach(el => { const t=el.textContent.trim().replace(/\s+/g,' '); if(t&&t.length>8&&t.length<600) results.push(t); });
   return [...new Set(results.filter(Boolean))];
 }
 
@@ -439,105 +363,55 @@ function showFetchStatus(type, msg) {
 
 // ===== 音声読み上げ =====
 const Voice = {
-  synth: window.speechSynthesis,
-  currentStep: 0,
-  steps: [],
-  mode: null,
-
+  synth: window.speechSynthesis, currentStep: 0, steps: [], mode: null,
   speak(text, onEnd) {
     this.synth.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'ja-JP';
-    u.rate = 0.85;
-    u.pitch = 1.0;
-    if (onEnd) u.onend = onEnd;
-    u.onerror = () => {};
+    u.lang='ja-JP'; u.rate=0.85; u.pitch=1.0;
+    if(onEnd) u.onend=onEnd; u.onerror=()=>{};
     this.synth.speak(u);
   },
-
   readIngredients(ingredients) {
-    this.mode = 'ingredients';
-    const text = '材料をお伝えします。' + ingredients.join('。') + '。以上です。';
-    this.speak(text, () => { this.mode = null; updateVoiceUI(); });
+    this.mode='ingredients';
+    this.speak('材料をお伝えします。'+ingredients.join('。')+'。以上です。', ()=>{this.mode=null;updateVoiceUI();});
     updateVoiceUI();
   },
-
-  startSteps(steps) {
-    this.mode = 'steps';
-    this.steps = steps;
-    this.currentStep = 0;
-    this.readCurrentStep();
-  },
-
+  startSteps(steps) { this.mode='steps'; this.steps=steps; this.currentStep=0; this.readCurrentStep(); },
   readCurrentStep() {
-    if (this.currentStep >= this.steps.length) {
-      this.speak('すべての手順が終わりました。お疲れ様でした！', () => {
-        this.mode = null;
-        updateVoiceUI();
-        renderSteps();
-      });
-      return;
-    }
-    updateVoiceUI();
-    renderSteps();
-    this.speak('手順' + (this.currentStep + 1) + '。' + this.steps[this.currentStep]);
+    if(this.currentStep>=this.steps.length){ this.speak('すべての手順が終わりました。お疲れ様でした！',()=>{this.mode=null;updateVoiceUI();renderSteps();}); return; }
+    updateVoiceUI(); renderSteps();
+    this.speak('手順'+(this.currentStep+1)+'。'+this.steps[this.currentStep]);
   },
-
-  nextStep() {
-    this.currentStep = Math.min(this.currentStep + 1, this.steps.length);
-    this.readCurrentStep();
-  },
-
-  prevStep() {
-    if (this.currentStep > 0) this.currentStep--;
-    this.readCurrentStep();
-  },
-
-  stop() {
-    this.synth.cancel();
-    this.mode = null;
-    this.currentStep = 0;
-    updateVoiceUI();
-    renderSteps();
-  }
+  nextStep() { this.currentStep=Math.min(this.currentStep+1,this.steps.length); this.readCurrentStep(); },
+  prevStep() { if(this.currentStep>0)this.currentStep--; this.readCurrentStep(); },
+  stop() { this.synth.cancel(); this.mode=null; this.currentStep=0; updateVoiceUI(); renderSteps(); }
 };
 
 // ===== 音声検索 =====
 let recognition = null;
-
 function initRecognition() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return null;
+  const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR) return null;
   const r = new SR();
-  r.lang = 'ja-JP';
-  r.continuous = false;
-  r.interimResults = true;
+  r.lang='ja-JP'; r.continuous=false; r.interimResults=true;
   r.onresult = e => {
     const t = e.results[0][0].transcript;
-    document.getElementById('listeningResult').textContent = '「' + t + '」';
-    if (e.results[0].isFinal) {
-      stopVoiceSearch();
-      document.getElementById('searchInput').value = t;
-      renderList();
-      const hits = DB.search(t);
-      if (hits.length === 1) setTimeout(() => showDetailScreen(hits[0].id), 400);
-    }
+    document.getElementById('listeningResult').textContent='「'+t+'」';
+    if(e.results[0].isFinal){ stopVoiceSearch(); document.getElementById('searchInput').value=t; renderList(); const hits=DB.search(t); if(hits.length===1)setTimeout(()=>showDetailScreen(hits[0].id),400); }
   };
-  r.onerror = () => stopVoiceSearch();
-  r.onend = () => document.getElementById('listeningOverlay').classList.remove('active');
+  r.onerror=()=>stopVoiceSearch();
+  r.onend=()=>document.getElementById('listeningOverlay').classList.remove('active');
   return r;
 }
-
 function startVoiceSearch() {
-  if (!recognition) recognition = initRecognition();
-  if (!recognition) { alert('このブラウザは音声入力に対応していません。\nAndroid Chromeでご利用ください。'); return; }
-  document.getElementById('listeningResult').textContent = 'レシピ名を話してください';
+  if(!recognition)recognition=initRecognition();
+  if(!recognition){alert('Android Chromeでご利用ください');return;}
+  document.getElementById('listeningResult').textContent='レシピ名を話してください';
   document.getElementById('listeningOverlay').classList.add('active');
-  try { recognition.start(); } catch(e) {}
+  try{recognition.start();}catch(e){}
 }
-
 function stopVoiceSearch() {
-  if (recognition) try { recognition.stop(); } catch(e) {}
+  if(recognition)try{recognition.stop();}catch(e){}
   document.getElementById('listeningOverlay').classList.remove('active');
 }
 
@@ -546,200 +420,121 @@ let currentRecipeId = null;
 let editingId = null;
 
 function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
-  window.scrollTo(0, 0);
+  window.scrollTo(0,0);
 }
-
-function showListScreen() {
-  Voice.stop();
-  showScreen('screenList');
-  renderList();
-}
-
+function showListScreen() { Voice.stop(); showScreen('screenList'); renderList(); }
 function showDetailScreen(id) {
-  currentRecipeId = id;
-  const r = DB.find(id);
-  if (!r) return showListScreen();
-  document.getElementById('detailHeaderTitle').textContent = r.name;
+  currentRecipeId=id;
+  const r=DB.find(id);
+  if(!r)return showListScreen();
+  document.getElementById('detailHeaderTitle').textContent=r.name;
   renderDetailContent(r);
   showScreen('screenDetail');
 }
-
 function showAddScreen() {
-  editingId = null;
-  document.getElementById('formTitle').textContent = 'レシピを追加';
-  document.getElementById('editId').value = '';
-  document.getElementById('inputName').value = '';
-  document.getElementById('inputUrl').value = '';
-  document.getElementById('inputIngredients').value = '';
-  document.getElementById('inputSteps').value = '';
-  document.getElementById('deleteArea').innerHTML = '';
-  document.getElementById('fetchStatus').className = 'fetch-status';
+  editingId=null;
+  document.getElementById('formTitle').textContent='レシピを追加';
+  ['editId','inputName','inputUrl','inputIngredients','inputSteps'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('deleteArea').innerHTML='';
+  document.getElementById('fetchStatus').className='fetch-status';
   showScreen('screenForm');
 }
-
 function showEditScreen(id) {
-  const r = DB.find(id);
-  if (!r) return;
-  editingId = id;
-  document.getElementById('formTitle').textContent = 'レシピを編集';
-  document.getElementById('editId').value = id;
-  document.getElementById('inputName').value = r.name;
-  document.getElementById('inputUrl').value = r.url || '';
-  document.getElementById('inputIngredients').value = r.ingredients.join('\n');
-  document.getElementById('inputSteps').value = r.steps.join('\n');
-  document.getElementById('deleteArea').innerHTML =
-    '<button class="delete-btn" onclick="deleteRecipe(\'' + id + '\')">🗑️ このレシピを削除</button>';
-  document.getElementById('fetchStatus').className = 'fetch-status';
+  const r=DB.find(id); if(!r)return;
+  editingId=id;
+  document.getElementById('formTitle').textContent='レシピを編集';
+  document.getElementById('editId').value=id;
+  document.getElementById('inputName').value=r.name;
+  document.getElementById('inputUrl').value=r.url||'';
+  document.getElementById('inputIngredients').value=r.ingredients.join('\n');
+  document.getElementById('inputSteps').value=r.steps.join('\n');
+  document.getElementById('deleteArea').innerHTML='<button class="delete-btn" onclick="deleteRecipe(\''+id+'\')">🗑️ このレシピを削除</button>';
+  document.getElementById('fetchStatus').className='fetch-status';
   showScreen('screenForm');
 }
-
-function cancelForm() {
-  if (editingId) showDetailScreen(editingId);
-  else showListScreen();
-}
+function cancelForm() { if(editingId)showDetailScreen(editingId); else showListScreen(); }
 
 // ===== レンダリング =====
 function renderList() {
-  const q = document.getElementById('searchInput').value.trim();
-  const list = DB.search(q);
-  const el = document.getElementById('recipeList');
-  if (list.length === 0) {
-    el.innerHTML = '<div class="empty-state"><div class="emoji">' + (q ? '🔍' : '🍳') + '</div><div>' +
-      (q ? '「' + escHtml(q) + '」は見つかりませんでした' : 'レシピを追加してみましょう！') + '</div>' +
-      '<div style="font-size:0.8rem;color:#bbb;margin-top:8px">' + (q ? '' : '右下の ＋ ボタンから追加できます') + '</div></div>';
-    return;
-  }
-  el.innerHTML = list.map(r =>
-    '<div class="recipe-card" onclick="showDetailScreen(\'' + r.id + '\')">' +
-    '<div class="recipe-icon">🍽️</div>' +
-    '<div class="recipe-info"><div class="recipe-name">' + escHtml(r.name) + '</div>' +
-    '<div class="recipe-meta">材料 ' + r.ingredients.length + '品目・' + r.steps.length + 'ステップ</div></div>' +
-    '<div class="recipe-arrow">›</div></div>'
-  ).join('');
+  const q=document.getElementById('searchInput').value.trim();
+  const list=DB.search(q);
+  const el=document.getElementById('recipeList');
+  if(!list.length){ el.innerHTML='<div class="empty-state"><div class="emoji">'+(q?'🔍':'🍳')+'</div><div>'+(q?'「'+escHtml(q)+'」は見つかりませんでした':'レシピを追加してみましょう！')+'</div><div style="font-size:0.8rem;color:#bbb;margin-top:8px">'+(q?'':'右下の ＋ ボタンから追加できます')+'</div></div>'; return; }
+  el.innerHTML=list.map(r=>'<div class="recipe-card" onclick="showDetailScreen(\''+r.id+'\')"><div class="recipe-icon">🍽️</div><div class="recipe-info"><div class="recipe-name">'+escHtml(r.name)+'</div><div class="recipe-meta">材料 '+r.ingredients.length+'品目・'+r.steps.length+'ステップ</div></div><div class="recipe-arrow">›</div></div>').join('');
 }
 
 function renderDetailContent(r) {
-  const url = r.url
-    ? '<a href="' + escHtml(r.url) + '" class="recipe-url-link" target="_blank" rel="noopener">🔗 元のレシピを見る</a>'
-    : '';
-  document.getElementById('detailContent').innerHTML =
-    '<div class="recipe-title-lg">' + escHtml(r.name) + '</div>' + url +
-    '<div class="voice-status" id="voiceStatus"></div>' +
-    '<div class="section-card">' +
-    '<div class="section-header"><div class="section-title">🥕 材料</div>' +
-    '<button class="read-btn" id="ingredientsBtn" onclick="toggleIngredients()">▶ 読み上げ</button></div>' +
-    '<div id="ingredientsList">' +
-    r.ingredients.map(i => '<div class="ingredient-item"><span class="ingredient-bullet"></span>' + escHtml(i) + '</div>').join('') +
-    '</div></div>' +
-    '<div class="section-card">' +
-    '<div class="section-header"><div class="section-title">📋 手順</div>' +
-    '<button class="read-btn" id="stepsStartBtn" onclick="toggleSteps()">▶ 読み上げ</button></div>' +
-    '<div id="stepsList"></div>' +
-    '<div class="step-controls" id="stepControls" style="display:none">' +
-    '<button class="step-btn prev" onclick="Voice.prevStep()">◀ 前へ</button>' +
-    '<button class="step-btn stop" onclick="Voice.stop()">■ 停止</button>' +
-    '<button class="step-btn next" onclick="Voice.nextStep()">次へ ▶</button>' +
-    '</div></div>';
+  const url=r.url?'<a href="'+escHtml(r.url)+'" class="recipe-url-link" target="_blank" rel="noopener">🔗 元のレシピを見る</a>':'';
+  document.getElementById('detailContent').innerHTML=
+    '<div class="recipe-title-lg">'+escHtml(r.name)+'</div>'+url+
+    '<div class="voice-status" id="voiceStatus"></div>'+
+    '<div class="section-card"><div class="section-header"><div class="section-title">🥕 材料</div><button class="read-btn" id="ingredientsBtn" onclick="toggleIngredients()">▶ 読み上げ</button></div>'+
+    '<div id="ingredientsList">'+r.ingredients.map(i=>'<div class="ingredient-item"><span class="ingredient-bullet"></span>'+escHtml(i)+'</div>').join('')+'</div></div>'+
+    '<div class="section-card"><div class="section-header"><div class="section-title">📋 手順</div><button class="read-btn" id="stepsStartBtn" onclick="toggleSteps()">▶ 読み上げ</button></div>'+
+    '<div id="stepsList"></div><div class="step-controls" id="stepControls" style="display:none">'+
+    '<button class="step-btn prev" onclick="Voice.prevStep()">◀ 前へ</button>'+
+    '<button class="step-btn stop" onclick="Voice.stop()">■ 停止</button>'+
+    '<button class="step-btn next" onclick="Voice.nextStep()">次へ ▶</button></div></div>';
   renderSteps();
 }
 
 function renderSteps() {
-  const r = DB.find(currentRecipeId);
-  if (!r) return;
-  const el = document.getElementById('stepsList');
-  if (!el) return;
-  el.innerHTML = r.steps.map((s, i) => {
-    const isCurrent = Voice.mode === 'steps' && i === Voice.currentStep;
-    return '<div class="step-item' + (isCurrent ? ' current-step' : '') + '">' +
-      '<div class="step-num' + (isCurrent ? ' current' : '') + '">' + (i + 1) + '</div>' +
-      '<div class="step-text">' + escHtml(s) + '</div></div>';
-  }).join('');
-  const ctrl = document.getElementById('stepControls');
-  if (ctrl) ctrl.style.display = Voice.mode === 'steps' ? 'flex' : 'none';
+  const r=DB.find(currentRecipeId); if(!r)return;
+  const el=document.getElementById('stepsList'); if(!el)return;
+  el.innerHTML=r.steps.map((s,i)=>{const c=Voice.mode==='steps'&&i===Voice.currentStep;return '<div class="step-item'+(c?' current-step':'')+'"><div class="step-num'+(c?' current':'')+'">'+( i+1)+'</div><div class="step-text">'+escHtml(s)+'</div></div>';}).join('');
+  const ctrl=document.getElementById('stepControls');
+  if(ctrl)ctrl.style.display=Voice.mode==='steps'?'flex':'none';
 }
 
 function updateVoiceUI() {
-  const el = document.getElementById('voiceStatus');
-  if (!el) return;
-  if (Voice.mode === 'ingredients') {
-    el.className = 'voice-status active';
-    el.textContent = '🔊 材料を読み上げています...';
-  } else if (Voice.mode === 'steps') {
-    el.className = 'voice-status active';
-    el.textContent = '🔊 手順 ' + (Voice.currentStep + 1) + ' / ' + Voice.steps.length + ' を読み上げています';
-  } else {
-    el.className = 'voice-status';
-  }
-  const ib = document.getElementById('ingredientsBtn');
-  if (ib) { ib.textContent = Voice.mode === 'ingredients' ? '■ 停止' : '▶ 読み上げ'; ib.className = 'read-btn' + (Voice.mode === 'ingredients' ? ' playing' : ''); }
-  const sb = document.getElementById('stepsStartBtn');
-  if (sb) { sb.textContent = Voice.mode === 'steps' ? '■ 停止' : '▶ 読み上げ'; sb.className = 'read-btn' + (Voice.mode === 'steps' ? ' playing' : ''); }
+  const el=document.getElementById('voiceStatus'); if(!el)return;
+  if(Voice.mode==='ingredients'){el.className='voice-status active';el.textContent='🔊 材料を読み上げています...';}
+  else if(Voice.mode==='steps'){el.className='voice-status active';el.textContent='🔊 手順 '+(Voice.currentStep+1)+' / '+Voice.steps.length+' を読み上げています';}
+  else el.className='voice-status';
+  const ib=document.getElementById('ingredientsBtn');
+  if(ib){ib.textContent=Voice.mode==='ingredients'?'■ 停止':'▶ 読み上げ';ib.className='read-btn'+(Voice.mode==='ingredients'?' playing':'');}
+  const sb=document.getElementById('stepsStartBtn');
+  if(sb){sb.textContent=Voice.mode==='steps'?'■ 停止':'▶ 読み上げ';sb.className='read-btn'+(Voice.mode==='steps'?' playing':'');}
 }
 
-function toggleIngredients() {
-  const r = DB.find(currentRecipeId);
-  if (!r) return;
-  if (Voice.mode === 'ingredients') Voice.stop();
-  else Voice.readIngredients(r.ingredients);
-}
-
-function toggleSteps() {
-  const r = DB.find(currentRecipeId);
-  if (!r) return;
-  if (Voice.mode === 'steps') Voice.stop();
-  else Voice.startSteps(r.steps);
-}
+function toggleIngredients() { const r=DB.find(currentRecipeId);if(!r)return;if(Voice.mode==='ingredients')Voice.stop();else Voice.readIngredients(r.ingredients); }
+function toggleSteps() { const r=DB.find(currentRecipeId);if(!r)return;if(Voice.mode==='steps')Voice.stop();else Voice.startSteps(r.steps); }
 
 // ===== 保存・削除 =====
-function saveRecipe() {
-  const name = document.getElementById('inputName').value.trim();
-  const url = document.getElementById('inputUrl').value.trim();
-  const ingredients = document.getElementById('inputIngredients').value.trim().split('\n').filter(l => l.trim());
-  const steps = document.getElementById('inputSteps').value.trim().split('\n').filter(l => l.trim());
-  if (!name) { alert('レシピ名を入力してください'); return; }
-  if (!ingredients.length) { alert('材料を入力してください'); return; }
-  if (!steps.length) { alert('手順を入力してください'); return; }
-  const id = document.getElementById('editId').value;
-  if (id) { DB.update({ id, name, url, ingredients, steps }); showDetailScreen(id); }
-  else { const r = DB.add({ name, url, ingredients, steps }); showDetailScreen(r.id); }
+async function saveRecipe() {
+  const name=document.getElementById('inputName').value.trim();
+  const url=document.getElementById('inputUrl').value.trim();
+  const ingredients=document.getElementById('inputIngredients').value.trim().split('\n').filter(l=>l.trim());
+  const steps=document.getElementById('inputSteps').value.trim().split('\n').filter(l=>l.trim());
+  if(!name){alert('レシピ名を入力してください');return;}
+  if(!ingredients.length){alert('材料を入力してください');return;}
+  if(!steps.length){alert('手順を入力してください');return;}
+  const btn=document.getElementById('saveBtn');
+  btn.disabled=true; btn.textContent='保存中...';
+  try {
+    const id=document.getElementById('editId').value;
+    if(id){ await DB.update({id,name,url,ingredients,steps}); showDetailScreen(id); }
+    else{ const r=await DB.add({name,url,ingredients,steps}); showDetailScreen(r.id); }
+  } catch(e){ alert('保存に失敗しました。もう一度お試しください。'); }
+  finally{ btn.disabled=false; btn.textContent='保存する'; }
 }
 
-function deleteRecipe(id) {
-  if (!confirm('このレシピを削除しますか？')) return;
-  DB.delete(id);
+async function deleteRecipe(id) {
+  if(!confirm('このレシピを削除しますか？'))return;
+  await DB.delete(id);
   showListScreen();
 }
 
-// ===== ユーティリティ =====
-function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// ===== 起動処理 =====
+// ===== 起動 =====
 window.addEventListener('load', () => {
-  const params = new URLSearchParams(location.search);
-  const q = params.get('q') || params.get('search');
-  if (q) document.getElementById('searchInput').value = decodeURIComponent(q);
-
-  if (DB.getAll().length === 0) {
-    DB.add({
-      name: 'タケノコご飯（サンプル）',
-      url: '',
-      ingredients: ['米 2合', 'タケノコ水煮 200g', '醤油 大さじ2', 'みりん 大さじ1', '酒 大さじ1', '和風だし 小さじ1', '油揚げ 1枚（任意）'],
-      steps: [
-        '米をといで水に30分浸します',
-        'タケノコを薄切りにします',
-        '油揚げを細切りにします',
-        '炊飯器に米・タケノコ・油揚げを入れます',
-        '醤油・みりん・酒・だしを加え、2合の目盛りまで水を足します',
-        '普通モードで炊きます',
-        '炊き上がったら全体を混ぜて完成です'
-      ]
-    });
-  }
-  renderList();
+  const params=new URLSearchParams(location.search);
+  const q=params.get('q')||params.get('search');
+  if(q)document.getElementById('searchInput').value=decodeURIComponent(q);
+  startSync();
 });
 </script>
 </body>
