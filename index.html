@@ -67,6 +67,7 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
 .voice-status { background: #fff5f0; border: 1px solid #ffd4c0; border-radius: 10px; padding: 12px; margin-bottom: 12px; text-align: center; font-size: 0.9rem; display: none; }
 .voice-status.active { display: block; }
 
+/* フォーム */
 .form-content { padding: 16px; padding-bottom: 100px; }
 .form-group { margin-bottom: 16px; }
 .form-label { font-weight: bold; font-size: 0.9rem; color: #555; margin-bottom: 6px; display: block; }
@@ -74,6 +75,19 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
 .form-input:focus, .form-textarea:focus { border-color: #ff6b35; }
 .form-textarea { resize: vertical; min-height: 100px; }
 .form-hint { font-size: 0.78rem; color: #999; margin-top: 4px; }
+
+/* URL入力エリア */
+.url-input-area { display: flex; gap: 8px; align-items: stretch; }
+.url-input-area .form-input { flex: 1; margin: 0; }
+.fetch-btn { background: #ff6b35; color: white; border: none; border-radius: 10px; padding: 0 16px; font-size: 0.9rem; font-weight: bold; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+.fetch-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+/* 取得状況バナー */
+.fetch-status { border-radius: 10px; padding: 12px; margin-top: 8px; font-size: 0.88rem; display: none; }
+.fetch-status.loading { display: block; background: #ebf8ff; color: #2b6cb0; border: 1px solid #bee3f8; }
+.fetch-status.success { display: block; background: #f0fff4; color: #276749; border: 1px solid #9ae6b4; }
+.fetch-status.error { display: block; background: #fff5f5; color: #c53030; border: 1px solid #fed7d7; }
+
 .save-btn { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #ff6b35; color: white; border: none; border-radius: 30px; padding: 16px 48px; font-size: 1rem; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(255,107,53,0.4); z-index: 50; }
 .delete-btn { display: block; width: 100%; background: #fff; border: 2px solid #fc8181; color: #e53e3e; border-radius: 10px; padding: 14px; font-size: 1rem; cursor: pointer; margin-top: 16px; text-align: center; font-weight: bold; }
 
@@ -128,29 +142,40 @@ body { font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif; 
   </div>
   <div class="form-content">
     <input type="hidden" id="editId">
+
+    <!-- URL入力 → 自動取得 -->
+    <div class="form-group">
+      <label class="form-label">レシピのURL</label>
+      <div class="url-input-area">
+        <input type="url" class="form-input" id="inputUrl" placeholder="https://... を貼り付け">
+        <button class="fetch-btn" id="fetchBtn" onclick="autoFetchRecipe()">自動取得</button>
+      </div>
+      <div class="fetch-status" id="fetchStatus"></div>
+      <div class="form-hint">URLを貼って「自動取得」を押すと材料・手順が自動で入ります</div>
+    </div>
+
     <div class="form-group">
       <label class="form-label">レシピ名 *</label>
       <input type="text" class="form-input" id="inputName" placeholder="例：タケノコご飯">
     </div>
-    <div class="form-group">
-      <label class="form-label">参照URL（任意）</label>
-      <input type="url" class="form-input" id="inputUrl" placeholder="https://...">
-      <div class="form-hint">元のレシピページのURLを貼っておくと後で確認できます</div>
-    </div>
+
     <div class="form-group">
       <label class="form-label">材料（1行に1つ）*</label>
       <textarea class="form-textarea" id="inputIngredients" rows="6" placeholder="米 2合&#10;タケノコ 200g&#10;醤油 大さじ2&#10;みりん 大さじ1"></textarea>
     </div>
+
     <div class="form-group">
       <label class="form-label">手順（1行に1ステップ）*</label>
       <textarea class="form-textarea" id="inputSteps" rows="8" placeholder="米をといで水に30分浸す&#10;タケノコを食べやすい大きさに切る&#10;調味料を合わせて炊飯器に入れる&#10;普通モードで炊く"></textarea>
     </div>
+
     <div id="deleteArea"></div>
   </div>
   <button class="save-btn" onclick="saveRecipe()">保存する</button>
 </div>
 
 <script>
+// ===== データ管理 =====
 const DB = {
   getAll() { return JSON.parse(localStorage.getItem('myRecipes') || '[]'); },
   save(list) { localStorage.setItem('myRecipes', JSON.stringify(list)); },
@@ -172,6 +197,135 @@ const DB = {
   }
 };
 
+// ===== URL自動取得 =====
+async function autoFetchRecipe() {
+  const url = document.getElementById('inputUrl').value.trim();
+  if (!url) { showFetchStatus('error', 'URLを入力してください'); return; }
+
+  const btn = document.getElementById('fetchBtn');
+  btn.disabled = true;
+  btn.textContent = '取得中...';
+  showFetchStatus('loading', '⏳ レシピ情報を取得しています...');
+
+  try {
+    const result = await fetchRecipeData(url);
+
+    if (result && (result.name || result.ingredients.length || result.steps.length)) {
+      if (result.name) document.getElementById('inputName').value = result.name;
+      if (result.ingredients.length) document.getElementById('inputIngredients').value = result.ingredients.join('\n');
+      if (result.steps.length) document.getElementById('inputSteps').value = result.steps.join('\n');
+
+      const parts = [];
+      if (result.name) parts.push('レシピ名');
+      if (result.ingredients.length) parts.push('材料 ' + result.ingredients.length + '品目');
+      if (result.steps.length) parts.push('手順 ' + result.steps.length + 'ステップ');
+      showFetchStatus('success', '✅ 取得成功！' + parts.join('・') + 'を入力しました。内容を確認して保存してください。');
+    } else {
+      showFetchStatus('error', '⚠️ このサイトは自動取得に対応していません。手動で入力してください。');
+    }
+  } catch(e) {
+    showFetchStatus('error', '❌ 取得できませんでした。URLを確認するか手動で入力してください。');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '自動取得';
+  }
+}
+
+async function fetchRecipeData(url) {
+  // CORSプロキシ経由でHTMLを取得
+  const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
+  const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error('fetch error');
+  const data = await res.json();
+  const html = data.contents;
+  if (!html) throw new Error('no content');
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+
+  // 方法1: schema.org JSON-LDから取得（最も確実）
+  const result = extractFromJsonLd(doc);
+  if (result && (result.ingredients.length || result.steps.length)) return result;
+
+  // 方法2: HTMLのmeta/タグから取得
+  return extractFromHtml(doc);
+}
+
+function extractFromJsonLd(doc) {
+  const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+  for (const script of scripts) {
+    try {
+      const json = JSON.parse(script.textContent);
+      const recipe = findRecipeInJson(json);
+      if (recipe) return parseSchemaRecipe(recipe);
+    } catch(e) {}
+  }
+  return null;
+}
+
+function findRecipeInJson(json) {
+  if (!json) return null;
+  if (Array.isArray(json)) {
+    for (const item of json) {
+      const r = findRecipeInJson(item);
+      if (r) return r;
+    }
+  }
+  const type = json['@type'];
+  if (type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe'))) return json;
+  if (json['@graph']) return findRecipeInJson(json['@graph']);
+  return null;
+}
+
+function parseSchemaRecipe(recipe) {
+  // レシピ名
+  const name = recipe.name || '';
+
+  // 材料
+  const ingredients = (recipe.recipeIngredient || [])
+    .map(i => String(i).trim())
+    .filter(Boolean);
+
+  // 手順
+  let steps = [];
+  const inst = recipe.recipeInstructions;
+  if (inst) {
+    if (typeof inst === 'string') {
+      steps = inst.split(/\n|。/).map(s => s.trim()).filter(s => s.length > 3);
+    } else if (Array.isArray(inst)) {
+      for (const s of inst) {
+        if (typeof s === 'string') {
+          steps.push(s.trim());
+        } else if (s['@type'] === 'HowToStep') {
+          steps.push((s.text || s.name || '').trim());
+        } else if (s['@type'] === 'HowToSection' && s.itemListElement) {
+          for (const sub of s.itemListElement) {
+            steps.push((sub.text || sub.name || '').trim());
+          }
+        }
+      }
+      steps = steps.filter(Boolean);
+    }
+  }
+
+  return { name, ingredients, steps };
+}
+
+function extractFromHtml(doc) {
+  // ページタイトルからレシピ名を取得
+  const name = (doc.querySelector('h1') || {}).textContent?.trim()
+    || doc.querySelector('title')?.textContent?.replace(/[-|].*$/, '').trim()
+    || '';
+  return { name, ingredients: [], steps: [] };
+}
+
+function showFetchStatus(type, msg) {
+  const el = document.getElementById('fetchStatus');
+  el.className = 'fetch-status ' + type;
+  el.textContent = msg;
+}
+
+// ===== 音声読み上げ =====
 const Voice = {
   synth: window.speechSynthesis,
   currentStep: 0,
@@ -236,6 +390,7 @@ const Voice = {
   }
 };
 
+// ===== 音声検索 =====
 let recognition = null;
 
 function initRecognition() {
@@ -263,10 +418,7 @@ function initRecognition() {
 
 function startVoiceSearch() {
   if (!recognition) recognition = initRecognition();
-  if (!recognition) {
-    alert('このブラウザは音声入力に対応していません。\nAndroid Chromeでご利用ください。');
-    return;
-  }
+  if (!recognition) { alert('このブラウザは音声入力に対応していません。\nAndroid Chromeでご利用ください。'); return; }
   document.getElementById('listeningResult').textContent = 'レシピ名を話してください';
   document.getElementById('listeningOverlay').classList.add('active');
   try { recognition.start(); } catch(e) {}
@@ -277,6 +429,7 @@ function stopVoiceSearch() {
   document.getElementById('listeningOverlay').classList.remove('active');
 }
 
+// ===== 画面遷移 =====
 let currentRecipeId = null;
 let editingId = null;
 
@@ -310,6 +463,7 @@ function showAddScreen() {
   document.getElementById('inputIngredients').value = '';
   document.getElementById('inputSteps').value = '';
   document.getElementById('deleteArea').innerHTML = '';
+  document.getElementById('fetchStatus').className = 'fetch-status';
   showScreen('screenForm');
 }
 
@@ -325,6 +479,7 @@ function showEditScreen(id) {
   document.getElementById('inputSteps').value = r.steps.join('\n');
   document.getElementById('deleteArea').innerHTML =
     '<button class="delete-btn" onclick="deleteRecipe(\'' + id + '\')">🗑️ このレシピを削除</button>';
+  document.getElementById('fetchStatus').className = 'fetch-status';
   showScreen('screenForm');
 }
 
@@ -333,6 +488,7 @@ function cancelForm() {
   else showListScreen();
 }
 
+// ===== レンダリング =====
 function renderList() {
   const q = document.getElementById('searchInput').value.trim();
   const list = DB.search(q);
@@ -424,6 +580,7 @@ function toggleSteps() {
   else Voice.startSteps(r.steps);
 }
 
+// ===== 保存・削除 =====
 function saveRecipe() {
   const name = document.getElementById('inputName').value.trim();
   const url = document.getElementById('inputUrl').value.trim();
@@ -443,10 +600,12 @@ function deleteRecipe(id) {
   showListScreen();
 }
 
+// ===== ユーティリティ =====
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ===== 起動処理 =====
 window.addEventListener('load', () => {
   const params = new URLSearchParams(location.search);
   const q = params.get('q') || params.get('search');
