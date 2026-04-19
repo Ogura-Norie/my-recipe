@@ -312,11 +312,87 @@ function parseSchemaRecipe(recipe) {
 }
 
 function extractFromHtml(doc) {
-  // ページタイトルからレシピ名を取得
-  const name = (doc.querySelector('h1') || {}).textContent?.trim()
-    || doc.querySelector('title')?.textContent?.replace(/[-|].*$/, '').trim()
+  const name = doc.querySelector('h1')?.textContent?.trim()
+    || doc.querySelector('title')?.textContent?.replace(/[|\-\u2014\u300c\u300d].*$/, '').trim()
     || '';
-  return { name, ingredients: [], steps: [] };
+  const ingredients = extractIngredientsFromHtml(doc);
+  const steps = extractStepsFromHtml(doc);
+  return { name, ingredients, steps };
+}
+
+function extractIngredientsFromHtml(doc) {
+  const results = [];
+
+  // 方法1：「材料」見出しの近くにあるul/liを探す
+  const headings = doc.querySelectorAll('h1,h2,h3,h4,h5');
+  for (const h of headings) {
+    if (/(材料|ingredient)/i.test(h.textContent || '')) {
+      let el = h.nextElementSibling;
+      while (el && !/^H[123]$/.test(el.tagName)) {
+        const lists = el.matches('ul,ol') ? [el] : Array.from(el.querySelectorAll('ul,ol'));
+        lists.forEach(list => {
+          list.querySelectorAll('li').forEach(li => {
+            const t = li.textContent.trim().replace(/\s+/g, ' ');
+            if (t && t.length > 1 && t.length < 120 && !t.startsWith('http')) results.push(t);
+          });
+        });
+        el = el.nextElementSibling;
+      }
+      if (results.length) break;
+    }
+  }
+
+  // 方法2：class名に ingredient / material / zairyo を含む要素
+  if (!results.length) {
+    doc.querySelectorAll('[class*="ingredient"],[class*="material"],[class*="zairyo"],[class*="Ingredient"]').forEach(el => {
+      el.querySelectorAll('li').forEach(li => {
+        const t = li.textContent.trim().replace(/\s+/g, ' ');
+        if (t && t.length > 1 && t.length < 120) results.push(t);
+      });
+    });
+  }
+
+  return [...new Set(results)];
+}
+
+function extractStepsFromHtml(doc) {
+  const results = [];
+
+  // 方法1：「作り方」「手順」「レシピ」見出しの近くにあるp/li/olを探す
+  const headings = doc.querySelectorAll('h1,h2,h3,h4,h5');
+  for (const h of headings) {
+    if (/(作り方|手順|レシピ|調理|how.?to|instruction|direction)/i.test(h.textContent || '')) {
+      let el = h.nextElementSibling;
+      while (el && !/^H[12]$/.test(el.tagName)) {
+        if (el.matches('ol')) {
+          el.querySelectorAll('li').forEach(li => {
+            const t = li.textContent.trim().replace(/\s+/g, ' ');
+            if (t && t.length > 5 && t.length < 600) results.push(t);
+          });
+        } else if (el.matches('p')) {
+          const t = el.textContent.trim().replace(/\s+/g, ' ');
+          if (t && t.length > 8 && t.length < 600) results.push(t);
+        } else {
+          el.querySelectorAll('p').forEach(p => {
+            const t = p.textContent.trim().replace(/\s+/g, ' ');
+            if (t && t.length > 8 && t.length < 600) results.push(t);
+          });
+        }
+        el = el.nextElementSibling;
+      }
+      if (results.length) break;
+    }
+  }
+
+  // 方法2：class名に step / instruction / procedure を含む要素
+  if (!results.length) {
+    doc.querySelectorAll('[class*="step"],[class*="Step"],[class*="instruction"],[class*="procedure"],[class*="howto"]').forEach(el => {
+      const t = el.textContent.trim().replace(/\s+/g, ' ');
+      if (t && t.length > 8 && t.length < 600) results.push(t);
+    });
+  }
+
+  return results.filter(Boolean);
 }
 
 function showFetchStatus(type, msg) {
