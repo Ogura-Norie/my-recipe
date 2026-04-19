@@ -232,13 +232,31 @@ async function autoFetchRecipe() {
 }
 
 async function fetchRecipeData(url) {
-  // CORSプロキシ経由でHTMLを取得
-  const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
-  const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error('fetch error');
-  const data = await res.json();
-  const html = data.contents;
-  if (!html) throw new Error('no content');
+  // 複数のプロキシを順番に試す
+  const proxies = [
+    async (u) => {
+      const res = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
+      const data = await res.json();
+      return data.contents;
+    },
+    async (u) => {
+      const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
+      return await res.text();
+    },
+    async (u) => {
+      const res = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u), { signal: AbortSignal.timeout(12000) });
+      return await res.text();
+    }
+  ];
+
+  let html = null;
+  for (const proxy of proxies) {
+    try {
+      const content = await proxy(url);
+      if (content && content.length > 500) { html = content; break; }
+    } catch(e) { continue; }
+  }
+  if (!html) throw new Error('全プロキシ失敗');
 
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
@@ -247,7 +265,7 @@ async function fetchRecipeData(url) {
   const result = extractFromJsonLd(doc);
   if (result && (result.ingredients.length || result.steps.length)) return result;
 
-  // 方法2: HTMLのmeta/タグから取得
+  // 方法2: HTMLのタグ構造から取得（白ごはん.com等）
   return extractFromHtml(doc);
 }
 
@@ -359,20 +377,26 @@ function extractStepsFromHtml(doc) {
   const results = [];
 
   // 方法1：「作り方」「手順」「レシピ」見出しの近くにあるp/li/olを探す
+  // h2レベルの見出しを探し、その配下のh3や段落もすべて収集する
   const headings = doc.querySelectorAll('h1,h2,h3,h4,h5');
   for (const h of headings) {
     if (/(作り方|手順|レシピ|調理|how.?to|instruction|direction)/i.test(h.textContent || '')) {
+      // この見出し以降、同レベル以上の見出しが来るまでの全p/liを収集
+      const level = parseInt(h.tagName[1]);
       let el = h.nextElementSibling;
-      while (el && !/^H[12]$/.test(el.tagName)) {
-        if (el.matches('ol')) {
+      while (el) {
+        // 同レベル以上のhタグが来たら終了
+        if (/^H[1-6]$/.test(el.tagName) && parseInt(el.tagName[1]) <= level) break;
+        if (el.matches('p')) {
+          const t = el.textContent.trim().replace(/\s+/g, ' ');
+          if (t && t.length > 8 && t.length < 600) results.push(t);
+        } else if (el.matches('ol')) {
           el.querySelectorAll('li').forEach(li => {
             const t = li.textContent.trim().replace(/\s+/g, ' ');
             if (t && t.length > 5 && t.length < 600) results.push(t);
           });
-        } else if (el.matches('p')) {
-          const t = el.textContent.trim().replace(/\s+/g, ' ');
-          if (t && t.length > 8 && t.length < 600) results.push(t);
         } else {
+          // divの中にあるpタグも収集
           el.querySelectorAll('p').forEach(p => {
             const t = p.textContent.trim().replace(/\s+/g, ' ');
             if (t && t.length > 8 && t.length < 600) results.push(t);
@@ -392,7 +416,8 @@ function extractStepsFromHtml(doc) {
     });
   }
 
-  return results.filter(Boolean);
+  // 重複除去
+  return [...new Set(results.filter(Boolean))];
 }
 
 function showFetchStatus(type, msg) {
